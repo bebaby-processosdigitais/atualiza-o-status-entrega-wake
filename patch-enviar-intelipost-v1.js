@@ -25,7 +25,7 @@
 //             em vez de criar embarque com canal errado.
 
 var CANAL_KIKKABOO   = "Wake_kikkaboobrasil";
-var CANAL_ABCDESIGN  = null;   // <-- preencher após confirmar na Intelipost
+var CANAL_ABCDESIGN  = null;   // <-- preencher após confirmar na Intelipost - é pra ser Wake_abcdesignbrasil
 
 // Faixas de ID do pedido na Wake por loja.
 // Observado em 06/08/2026: Kikkaboo 48918-75362 (5 dígitos),
