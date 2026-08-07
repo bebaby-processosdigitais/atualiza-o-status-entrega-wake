@@ -66,10 +66,23 @@ var FAIXA_KIKKABOO_MAX = 599999;
 var FAIXA_ABC_MIN      = 600000;
 var FAIXA_ABC_MAX      = 999999;
 
-// SKUs de KP (precificação de kit). São linha de nota, não volume físico.
-// Se existirem outros SKUs de serviço, acréscimo ou brinde, incluir aqui.
-var SKU_KP_MIN = 2310;
-var SKU_KP_MAX = 2316;
+// Filtro de itens que NÃO são volume físico.
+// Os KP (kit de precificação) são livro digital: entram na nota, mas não têm
+// expedição, peso nem volume. São os únicos com USOPROD = 'C'.
+//
+// O filtro é EXCLUSIVO de propósito: barra só o que se sabe ser digital, e
+// deixa passar todo o resto. Levantamento de 07/08/2026 mostrou três valores
+// em uso — 'R' (275 SKUs, revenda), 'C' (7 SKUs, os KP) e 'M' (3 SKUs, entre
+// eles GARRAFA TERMICA, produto físico de 2 kg com cadastro de matéria-prima).
+//
+// Um filtro inclusivo (só 'R') teria excluído os 'M' do payload, e mercadoria
+// real embarcaria sem constar no volume — falha invisível. Com o filtro
+// exclusivo, um produto digital novo com USOPROD diferente gera volume
+// fantasma, mas é barrado pela validação de cadastro da seção 3.5, com
+// mensagem clara. Falha visível é melhor.
+//
+// Para adicionar outro USOPROD sem expedição, inclua na lista: "'C','S'"
+var USOPROD_SEM_EXPEDICAO = "'C'";
 
 // ----------------------------------------------------------------------------
 // PARÂMETROS
@@ -219,6 +232,37 @@ if (podeEnviar) {
 }
 
 // ----------------------------------------------------------------------------
+// 3.5. VALIDAÇÃO DE CADASTRO (peso e cubagem)
+// ----------------------------------------------------------------------------
+// Existem produtos ativos no catálogo com PESOBRUTO = 0 e dimensões nulas
+// (ex.: 2300 CAPOTA RUBY, 2309 BARRA DE PROTECAO, 2327/2328 CAPOTA CARRINHO).
+// Se um deles entrar numa nota, o payload sairia com "weight": 0 e dimensões
+// nulas. Melhor bloquear com mensagem clara do que cotar frete errado.
+if (podeEnviar) {
+    var cadQuery = getQuery("native");
+    cadQuery.setParam("Pedido", Pedido);
+    cadQuery.nativeSelect(
+        "SELECT LISTAGG(PR.CODPROD || ' - ' || PR.DESCRPROD, '; ') " +
+        "       WITHIN GROUP (ORDER BY PR.CODPROD) AS ITENS_INVALIDOS " +
+        "FROM TGFITE I " +
+        "JOIN TGFPRO PR ON PR.CODPROD = I.CODPROD " +
+        "WHERE I.NUNOTA = {Pedido} " +
+        "  AND NVL(PR.USOPROD, 'X') NOT IN (" + USOPROD_SEM_EXPEDICAO + ") " +
+        "  AND (NVL(PR.PESOBRUTO,0) = 0 OR NVL(PR.ALTURA,0) = 0 " +
+        "       OR NVL(PR.LARGURA,0) = 0 OR NVL(PR.ESPESSURA,0) = 0)"
+    );
+
+    if (cadQuery.next()) {
+        var itensInvalidos = cadQuery.getString("ITENS_INVALIDOS");
+        if (itensInvalidos != null && String(itensInvalidos).trim() !== "") {
+            mensagem   = "Envio bloqueado: produtos sem peso ou dimensao cadastrada: " +
+                         itensInvalidos + ". Corrija o cadastro antes de enviar.";
+            podeEnviar = false;
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
 // 4. MONTAGEM DO PAYLOAD
 // ----------------------------------------------------------------------------
 var jsonResult = null;
@@ -306,8 +350,9 @@ if (podeEnviar) {
     "      FROM tgfite i " +
     "      JOIN tgfpro pr ON pr.codprod = i.codprod " +
     "      WHERE i.nunota = c.nunota " +
-    // Exclui os SKUs de KP, que sao linha de precificacao e nao volume fisico.
-    "        AND i.codprod NOT BETWEEN " + SKU_KP_MIN + " AND " + SKU_KP_MAX +
+    // Exclui itens sem expedicao fisica (KP / livro digital, USOPROD 'C').
+    // NVL trata usoprod nulo como fisico, para nao perder mercadoria real.
+    "        AND NVL(pr.usoprod, 'X') NOT IN (" + USOPROD_SEM_EXPEDICAO + ")" +
     "  ) " +
     ") AS JSON_RESULT " +
     "FROM tgfcab c " +
